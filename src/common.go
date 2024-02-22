@@ -678,7 +678,7 @@ type AnimLayout struct {
 }
 
 func newAnimLayout(sff *Sff, ln int16) *AnimLayout {
-	return &AnimLayout{anim: *newAnimation(sff), lay: *newLayout(ln), palfx: newPalFX()}
+	return &AnimLayout{anim: *newAnimation(sff, &sff.palList), lay: *newLayout(ln), palfx: newPalFX()}
 }
 func ReadAnimLayout(pre string, is IniSection,
 	sff *Sff, at AnimationTable, ln int16) *AnimLayout {
@@ -738,7 +738,31 @@ func (al *AnimLayout) ReadAnimPalfx(pre string, is IniSection) {
 			al.palfx.cycletime = s[3]
 		}
 	}
+	if is.ReadI32(pre+"sinmul", &s[0], &s[1], &s[2], &s[3]) {
+		if s[3] < 0 {
+			al.palfx.sinmul[0] = -s[0]
+			al.palfx.sinmul[1] = -s[1]
+			al.palfx.sinmul[2] = -s[2]
+			al.palfx.cycletimeMul = -s[3]
+		} else {
+			al.palfx.sinmul[0] = s[0]
+			al.palfx.sinmul[1] = s[1]
+			al.palfx.sinmul[2] = s[2]
+			al.palfx.cycletimeMul = s[3]
+		}
+	}
+	var s2 [2]int32
+	if is.ReadI32(pre+"sincolor", &s2[0], &s2[1]) {
+		if s2[1] < 0 {
+			al.palfx.sincolor = (-s2[0] / 256)
+			al.palfx.cycletimeColor = -s2[1]
+		} else {
+			al.palfx.sincolor = (s2[0] / 256)
+			al.palfx.cycletimeColor = s2[1]
+		}
+	}
 	is.ReadBool(pre+"invertall", &al.palfx.invertall)
+	is.ReadI32(pre+"invertblend", &al.palfx.invertblend)
 	var n float32
 	if is.ReadF32(pre+"color", &n) {
 		al.palfx.color = n / 256

@@ -443,7 +443,7 @@ func (c *Compiler) helper(is IniSection, sc *StateControllerBase, _ int8) (State
 		}); err != nil {
 			return err
 		}
-		if err := c.paramPostye(is, sc, helper_postype); err != nil {
+		if err := c.paramPostype(is, sc, helper_postype); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "ownpal",
@@ -584,6 +584,12 @@ func (c *Compiler) explodSub(is IniSection,
 		explod_id, VT_Int, 1, false); err != nil {
 		return err
 	}
+	// First, we see if postype parameter was declared, to see if
+	// an ikemenver character will modify facing, pos, random, vel
+	// or accel values without declaring postype.
+	if _, ok := is["postype"]; ok {
+		c.scAdd(sc, explod_postypeExists, "1", VT_Bool, 1)
+	}
 	if err := c.paramValue(is, sc, "facing",
 		explod_facing, VT_Int, 1, false); err != nil {
 		return err
@@ -600,23 +606,14 @@ func (c *Compiler) explodSub(is IniSection,
 		explod_random, VT_Float, 2, false); err != nil {
 		return err
 	}
-	if err := c.paramPostye(is, sc, explod_postype); err != nil {
-		return err
-	}
-	if err := c.paramSpace(is, sc, explod_space); err != nil {
-		return err
-	}
-	if err := c.paramProjection(is, sc, explod_projection); err != nil {
-		return err
-	}
-	f := false
+	found := false
 	if err := c.stateParam(is, "vel", func(data string) error {
-		f = true
+		found = true
 		return c.scAdd(sc, explod_velocity, data, VT_Float, 2)
 	}); err != nil {
 		return err
 	}
-	if !f {
+	if !found {
 		if err := c.paramValue(is, sc, "velocity",
 			explod_velocity, VT_Float, 2, false); err != nil {
 			return err
@@ -624,6 +621,15 @@ func (c *Compiler) explodSub(is IniSection,
 	}
 	if err := c.paramValue(is, sc, "accel",
 		explod_accel, VT_Float, 2, false); err != nil {
+		return err
+	}
+	if err := c.paramSpace(is, sc, explod_space); err != nil {
+		return err
+	}
+	if err := c.paramPostype(is, sc, explod_postype); err != nil {
+		return err
+	}
+	if err := c.paramProjection(is, sc, explod_projection); err != nil {
 		return err
 	}
 	if err := c.paramValue(is, sc, "scale",
@@ -685,6 +691,10 @@ func (c *Compiler) explodSub(is IniSection,
 		explod_removeongethit, VT_Bool, 1, false); err != nil {
 		return err
 	}
+	if err := c.paramValue(is, sc, "removeonchangestate",
+		explod_removeonchangestate, VT_Bool, 1, false); err != nil {
+		return err
+	}
 	if err := c.paramTrans(is, sc, "", explod_trans, false); err != nil {
 		return err
 	}
@@ -716,6 +726,14 @@ func (c *Compiler) explod(is IniSection, sc *StateControllerBase,
 			return c.scAdd(sc, explod_anim, data, VT_Int, 1,
 				sc.beToExp(BytecodeExp(prefix))...)
 		}); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "animelem",
+			explod_animelem, VT_Int, 1, false); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "animelemlooped",
+			explod_animelemlooped, VT_Bool, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "angle",
@@ -756,6 +774,14 @@ func (c *Compiler) modifyExplod(is IniSection, sc *StateControllerBase,
 			return c.scAdd(sc, explod_anim, data, VT_Int, 1,
 				sc.beToExp(BytecodeExp(prefix))...)
 		}); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "animelem",
+			explod_animelem, VT_Int, 1, false); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "animelemlooped",
+			explod_animelemlooped, VT_Bool, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "angle",
@@ -937,8 +963,38 @@ func (c *Compiler) palFXSub(is IniSection,
 	}); err != nil {
 		return err
 	}
+	if err := c.stateParam(is, prefix+"sinmul", func(data string) error {
+		bes, err := c.exprs(data, VT_Int, 4)
+		if err != nil {
+			return err
+		}
+		if len(bes) < 3 {
+			return Error(prefix + "sinmul - not enough arguments")
+		}
+		sc.add(palFX_sinmul, bes)
+		return nil
+	}); err != nil {
+		return err
+	}
+	if err := c.stateParam(is, prefix+"sincolor", func(data string) error {
+		bes, err := c.exprs(data, VT_Int, 2)
+		if err != nil {
+			return err
+		}
+		if len(bes) < 2 {
+			return Error(prefix + "sincolor - not enough arguments")
+		}
+		sc.add(palFX_sincolor, bes)
+		return nil
+	}); err != nil {
+		return err
+	}
 	if err := c.paramValue(is, sc, prefix+"invertall",
 		palFX_invertall, VT_Bool, 1, false); err != nil {
+		return err
+	}
+	if err := c.paramValue(is, sc, prefix+"invertblend",
+		palFX_invertblend, VT_Int, 1, false); err != nil {
 		return err
 	}
 	return nil
@@ -997,6 +1053,10 @@ func (c *Compiler) afterImageSub(is IniSection,
 	}
 	if err := c.paramValue(is, sc, prefix+"palinvertall",
 		afterImage_palinvertall, VT_Bool, 1, false); err != nil {
+		return err
+	}
+	if err := c.paramValue(is, sc, prefix+"palinvertblend",
+		afterImage_palinvertblend, VT_Int, 1, false); err != nil {
 		return err
 	}
 	if err := c.paramValue(is, sc, prefix+"palbright",
@@ -1632,7 +1692,7 @@ func (c *Compiler) projectile(is IniSection, sc *StateControllerBase,
 			projectile_redirectid, VT_Int, 1, false); err != nil {
 			return err
 		}
-		if err := c.paramPostye(is, sc, projectile_postype); err != nil {
+		if err := c.paramPostype(is, sc, projectile_postype); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "projid",
@@ -4073,8 +4133,20 @@ func (c *Compiler) modifyBGCtrl(is IniSection, sc *StateControllerBase, _ int8) 
 			modifyBGCtrl_sinadd, VT_Int, 4, false); err != nil {
 			return err
 		}
+		if err := c.paramValue(is, sc, "sinmul",
+			modifyBGCtrl_sinmul, VT_Int, 4, false); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "sincolor",
+			modifyBGCtrl_sincolor, VT_Int, 2, false); err != nil {
+			return err
+		}
 		if err := c.paramValue(is, sc, "invertall",
 			modifyBGCtrl_invertall, VT_Int, 1, false); err != nil {
+			return err
+		}
+		if err := c.paramValue(is, sc, "invertblend",
+			modifyBGCtrl_invertblend, VT_Int, 1, false); err != nil {
 			return err
 		}
 		if err := c.paramValue(is, sc, "color",

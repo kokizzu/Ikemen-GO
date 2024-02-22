@@ -213,6 +213,7 @@ const (
 	OC_enemy
 	OC_enemynear
 	OC_playerid
+	OC_helperindex
 	OC_p2
 	OC_stateowner
 	OC_rdreset
@@ -233,6 +234,8 @@ const (
 	OC_const_data_airjuggle
 	OC_const_data_sparkno
 	OC_const_data_guard_sparkno
+	OC_const_data_hitsound_channel
+	OC_const_data_guardsound_channel
 	OC_const_data_ko_echo
 	OC_const_data_intpersistindex
 	OC_const_data_floatpersistindex
@@ -412,6 +415,7 @@ const (
 	OC_ex_gethitvar_air_animtype
 	OC_ex_gethitvar_ground_animtype
 	OC_ex_gethitvar_fall_animtype
+	OC_ex_gethitvar_type
 	OC_ex_gethitvar_airtype
 	OC_ex_gethitvar_groundtype
 	OC_ex_gethitvar_damage
@@ -454,6 +458,7 @@ const (
 	OC_ex_gethitvar_guarddamage
 	OC_ex_gethitvar_hitpower
 	OC_ex_gethitvar_guardpower
+	OC_ex_gethitvar_kill
 	OC_ex_ailevelf
 	OC_ex_animelemlength
 	OC_ex_animlength
@@ -501,8 +506,8 @@ const (
 	OC_ex_scoretotal
 	OC_ex_selfstatenoexist
 	OC_ex_sprpriority
-	OC_ex_stagebackedge
-	OC_ex_stagefrontedge
+	OC_ex_stagebackedgedist
+	OC_ex_stagefrontedgedist
 	OC_ex_stagetime
 	OC_ex_standby
 	OC_ex_teamleader
@@ -518,6 +523,9 @@ const (
 	OC_ex_bgmlength
 	OC_ex_bgmposition
 	OC_ex_airjumpcount
+	OC_ex_envshakevar_time
+	OC_ex_envshakevar_freq
+	OC_ex_envshakevar_ampl
 )
 const (
 	NumVar     = 60
@@ -1030,6 +1038,13 @@ func (be BytecodeExp) run(c *Char) BytecodeValue {
 			}
 			sys.bcStack.Push(BytecodeSF())
 			i += int(*(*int32)(unsafe.Pointer(&be[i]))) + 4
+		case OC_helperindex:
+			if c = c.helperByIndex(sys.bcStack.Pop().ToI()); c != nil {
+				i += 4
+				continue
+			}
+			sys.bcStack.Push(BytecodeSF())
+			i += int(*(*int32)(unsafe.Pointer(&be[i]))) + 4
 		case OC_rdreset:
 			// NOP
 		case OC_run:
@@ -1453,6 +1468,10 @@ func (be BytecodeExp) run_const(c *Char, i *int, oc *Char) {
 		sys.bcStack.PushI(c.gi().data.sparkno)
 	case OC_const_data_guard_sparkno:
 		sys.bcStack.PushI(c.gi().data.guard.sparkno)
+	case OC_const_data_hitsound_channel:
+		sys.bcStack.PushI(c.gi().data.hitsound_channel)
+	case OC_const_data_guardsound_channel:
+		sys.bcStack.PushI(c.gi().data.guardsound_channel)
 	case OC_const_data_ko_echo:
 		sys.bcStack.PushI(c.gi().data.ko.echo)
 	case OC_const_data_intpersistindex:
@@ -1840,6 +1859,8 @@ func (be BytecodeExp) run_ex(c *Char, i *int, oc *Char) {
 		sys.bcStack.PushI(int32(c.ghv.groundanimtype))
 	case OC_ex_gethitvar_fall_animtype:
 		sys.bcStack.PushI(int32(c.ghv.fall.animtype))
+	case OC_ex_gethitvar_type:
+		sys.bcStack.PushI(int32(c.ghv._type))
 	case OC_ex_gethitvar_airtype:
 		sys.bcStack.PushI(int32(c.ghv.airtype))
 	case OC_ex_gethitvar_groundtype:
@@ -1924,6 +1945,8 @@ func (be BytecodeExp) run_ex(c *Char, i *int, oc *Char) {
 		sys.bcStack.PushI(c.ghv.hitpower)
 	case OC_ex_gethitvar_guardpower:
 		sys.bcStack.PushI(c.ghv.guardpower)
+	case OC_ex_gethitvar_kill:
+		sys.bcStack.PushB(c.ghv.kill)
 	case OC_ex_ailevelf:
 		if !c.sf(CSF_noailevel) {
 			sys.bcStack.PushF(c.aiLevel())
@@ -1957,7 +1980,7 @@ func (be BytecodeExp) run_ex(c *Char, i *int, oc *Char) {
 	case OC_ex_fighttime:
 		sys.bcStack.PushI(sys.gameTime)
 	case OC_ex_firstattack:
-		sys.bcStack.PushB(sys.firstAttack[c.teamside] == c.id)
+		sys.bcStack.PushB(sys.firstAttack[c.teamside] == c.playerNo)
 	case OC_ex_framespercount:
 		sys.bcStack.PushI(sys.lifebar.ti.framespercount)
 	case OC_ex_float:
@@ -2044,10 +2067,10 @@ func (be BytecodeExp) run_ex(c *Char, i *int, oc *Char) {
 		*sys.bcStack.Top() = c.selfStatenoExist(*sys.bcStack.Top())
 	case OC_ex_sprpriority:
 		sys.bcStack.PushI(c.sprPriority)
-	case OC_ex_stagebackedge:
-		sys.bcStack.PushF(c.stageBackEdge() * (c.localscl / oc.localscl))
-	case OC_ex_stagefrontedge:
-		sys.bcStack.PushF(c.stageFrontEdge() * (c.localscl / oc.localscl))
+	case OC_ex_stagebackedgedist:
+		sys.bcStack.PushF(c.stageBackEdgeDist() * (c.localscl / oc.localscl))
+	case OC_ex_stagefrontedgedist:
+		sys.bcStack.PushF(c.stageFrontEdgeDist() * (c.localscl / oc.localscl))
 	case OC_ex_stagetime:
 		sys.bcStack.PushI(sys.stage.stageTime)
 	case OC_ex_standby:
@@ -2088,6 +2111,12 @@ func (be BytecodeExp) run_ex(c *Char, i *int, oc *Char) {
 		}
 	case OC_ex_airjumpcount:
 		sys.bcStack.PushI(c.airJumpCount)
+	case OC_ex_envshakevar_time:
+		sys.bcStack.PushI(sys.envShake.time)
+	case OC_ex_envshakevar_freq:
+		sys.bcStack.PushF(sys.envShake.freq / float32(math.Pi) * 180)
+	case OC_ex_envshakevar_ampl:
+		sys.bcStack.PushF(float32(math.Abs(float64(sys.envShake.ampl / oc.localscl))))
 	default:
 		sys.errLog.Printf("%v\n", be[*i-1])
 		c.panic()
@@ -2458,7 +2487,7 @@ func (sc stateDef) Run(c *Char) {
 				}
 			}
 		case stateDef_anim:
-			c.changeAnim(exp[1].evalI(c), string(*(*[]byte)(unsafe.Pointer(&exp[0]))))
+			c.changeAnimEx(exp[1].evalI(c), c.playerNo, string(*(*[]byte)(unsafe.Pointer(&exp[0]))), false)
 		case stateDef_ctrl:
 			//in mugen fatal blow ignores statedef ctrl
 			if !c.ghv.fatal {
@@ -2932,7 +2961,7 @@ func (sc changeAnim) Run(c *Char, _ []int32) bool {
 			if r != -1 {
 				pn = r
 			}
-			crun.changeAnimEx(exp[1].evalI(c), pn, string(*(*[]byte)(unsafe.Pointer(&exp[0]))), false)
+			crun.changeAnim(exp[1].evalI(c), pn, string(*(*[]byte)(unsafe.Pointer(&exp[0]))))
 			if setelem {
 				crun.setAnimElem(elem)
 			}
@@ -3349,7 +3378,10 @@ const (
 	palFX_add
 	palFX_mul
 	palFX_sinadd
+	palFX_sinmul
+	palFX_sincolor
 	palFX_invertall
+	palFX_invertblend
 	palFX_last = iota - 1
 	palFX_redirectid
 )
@@ -3382,8 +3414,34 @@ func (sc palFX) runSub(c *Char, pfd *PalFXDef,
 		pfd.sinadd[0] = exp[0].evalI(c) * side
 		pfd.sinadd[1] = exp[1].evalI(c) * side
 		pfd.sinadd[2] = exp[2].evalI(c) * side
+	case palFX_sinmul:
+		var side int32 = 1
+		if len(exp) > 3 {
+			if exp[3].evalI(c) < 0 {
+				pfd.cycletimeMul = -exp[3].evalI(c)
+				side = -1
+			} else {
+				pfd.cycletimeMul = exp[3].evalI(c)
+			}
+		}
+		pfd.sinmul[0] = exp[0].evalI(c) * side
+		pfd.sinmul[1] = exp[1].evalI(c) * side
+		pfd.sinmul[2] = exp[2].evalI(c) * side
+	case palFX_sincolor:
+		var side int32 = 1
+		if len(exp) > 1 {
+			if exp[1].evalI(c) < 0 {
+				pfd.cycletimeColor = -exp[1].evalI(c)
+				side = -1
+			} else {
+				pfd.cycletimeColor = exp[1].evalI(c)
+			}
+		}
+		pfd.sincolor = (exp[0].evalI(c) / 256) * side
 	case palFX_invertall:
 		pfd.invertall = exp[0].evalB(c)
+	case palFX_invertblend:
+		pfd.invertblend = Clamp(exp[0].evalI(c), -1, 2)
 	default:
 		return false
 	}
@@ -3412,6 +3470,10 @@ func (sc palFX) Run(c *Char, _ []int32) bool {
 				return false
 			}
 		}
+		//Mugen 1.1 behavior if invertblend param is omitted(Only if char mugenversion = 1.1)
+		if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 && crun.stCgi().ikemenver[0] <= 0 && crun.stCgi().ikemenver[1] <= 0 {
+			pf.invertblend = -2
+		}
 		sc.runSub(c, &pf.PalFXDef, id, exp)
 		return true
 	})
@@ -3424,6 +3486,8 @@ func (sc allPalFX) Run(c *Char, _ []int32) bool {
 	sys.allPalFX.clear()
 	StateControllerBase(sc).run(c, func(id byte, exp []BytecodeExp) bool {
 		palFX(sc).runSub(c, &sys.allPalFX.PalFXDef, id, exp)
+		//Forcing 1.1 kind behavior
+		sys.allPalFX.invertblend = Clamp(sys.allPalFX.invertblend, 0, 1)
 		return true
 	})
 	return false
@@ -3433,8 +3497,11 @@ type bgPalFX palFX
 
 func (sc bgPalFX) Run(c *Char, _ []int32) bool {
 	sys.bgPalFX.clear()
+	//Forcing 1.1 behavior
+	sys.bgPalFX.invertblend = -2
 	StateControllerBase(sc).run(c, func(id byte, exp []BytecodeExp) bool {
 		palFX(sc).runSub(c, &sys.bgPalFX.PalFXDef, id, exp)
+		sys.bgPalFX.invertblend = -3
 		return true
 	})
 	return false
@@ -3465,8 +3532,11 @@ const (
 	explod_under
 	explod_shadow
 	explod_removeongethit
+	explod_removeonchangestate
 	explod_trans
 	explod_anim
+	explod_animelem
+	explod_animelemlooped
 	explod_angle
 	explod_yangle
 	explod_xangle
@@ -3476,6 +3546,7 @@ const (
 	explod_bindid
 	explod_space
 	explod_window
+	explod_postypeExists
 	explod_redirectid
 )
 
@@ -3497,9 +3568,6 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 						return false
 					}
 					e.id = 0
-					if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 {
-						e.postype = PT_N
-					}
 				} else {
 					return false
 				}
@@ -3509,9 +3577,10 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 					return false
 				}
 				e.id = 0
-				if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 {
-					e.postype = PT_N
-				}
+			}
+			// Mugenversion 1.1 chars default postype to "None"
+			if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 {
+				e.postype = PT_None
 			}
 		}
 		switch id {
@@ -3537,21 +3606,21 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 				e.vfacing = 1
 			}
 		case explod_pos:
-			e.offset[0] = exp[0].evalF(c) * lclscround
+			e.relativePos[0] = exp[0].evalF(c) * lclscround
 			if len(exp) > 1 {
-				e.offset[1] = exp[1].evalF(c) * lclscround
+				e.relativePos[1] = exp[1].evalF(c) * lclscround
 			}
 		case explod_random:
 			rndx := (exp[0].evalF(c) / 2) * lclscround
-			e.offset[0] += RandF(-rndx, rndx)
+			e.relativePos[0] += RandF(-rndx, rndx)
 			if len(exp) > 1 {
 				rndy := (exp[1].evalF(c) / 2) * lclscround
-				e.offset[1] += RandF(-rndy, rndy)
+				e.relativePos[1] += RandF(-rndy, rndy)
 			}
-		case explod_postype:
-			e.postype = PosType(exp[0].evalI(c))
 		case explod_space:
 			e.space = Space(exp[0].evalI(c))
+		case explod_postype:
+			e.postype = PosType(exp[0].evalI(c))
 		case explod_velocity:
 			e.velocity[0] = exp[0].evalF(c) * lclscround
 			if len(exp) > 1 {
@@ -3609,6 +3678,8 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 			}
 		case explod_removeongethit:
 			e.removeongethit = exp[0].evalB(c)
+		case explod_removeonchangestate:
+			e.removeonchangestate = exp[0].evalB(c)
 		case explod_trans:
 			e.alpha[0] = exp[0].evalI(c)
 			e.alpha[1] = exp[1].evalI(c)
@@ -3624,6 +3695,14 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 			}
 		case explod_anim:
 			e.anim = crun.getAnim(exp[1].evalI(c), string(*(*[]byte)(unsafe.Pointer(&exp[0]))), false)
+		case explod_animelem:
+			if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
+				e.animelem = exp[0].evalI(c)
+			}
+		case explod_animelemlooped:
+			if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
+				e.animelemlooped = exp[0].evalB(c)
+			}
 		case explod_angle:
 			e.rot.angle = exp[0].evalF(c)
 		case explod_yangle:
@@ -3639,12 +3718,15 @@ func (sc explod) Run(c *Char, _ []int32) bool {
 			if bId == -1 {
 				bId = crun.id
 			}
-			e.bindId = bId
+			e.setBind(bId)
 		case explod_projection:
 			e.projection = Projection(exp[0].evalI(c))
 		case explod_window:
 			e.window = [4]float32{exp[0].evalF(c) * lclscround, exp[1].evalF(c) * lclscround, exp[2].evalF(c) * lclscround, exp[3].evalF(c) * lclscround}
 		default:
+			if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 && crun.stCgi().ikemenver[0] <= 0 && crun.stCgi().ikemenver[1] <= 0 {
+				e.palfxdef.invertblend = -2
+			}
 			palFX(sc).runSub(c, &e.palfxdef, id, exp)
 		}
 		return true
@@ -3671,6 +3753,9 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 	var expls []*Explod
 	rp := [...]int32{-1, 0}
 	remap := false
+	var f, vf float32 = 1, 1
+	sp, pos, vel, accel := Space_none, [2]float32{0, 0}, [2]float32{0, 0}, [2]float32{0, 0}
+	ptexists := false
 	eachExpl := func(f func(e *Explod)) {
 		for _, e := range expls {
 			f(e)
@@ -3693,6 +3778,8 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 			remap = true
 		case explod_id:
 			eid = exp[0].evalI(c)
+		case explod_postypeExists:
+			ptexists = true
 		default:
 			if len(expls) == 0 {
 				expls = crun.getExplods(eid)
@@ -3708,57 +3795,90 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 			switch id {
 			case explod_facing:
 				if exp[0].evalI(c) < 0 {
-					eachExpl(func(e *Explod) { e.relativef = -1 })
-				} else {
-					eachExpl(func(e *Explod) { e.relativef = 1 })
+					f = -1
+				}
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) {
+						e.relativef = f
+					})
 				}
 			case explod_vfacing:
 				if exp[0].evalI(c) < 0 {
-					eachExpl(func(e *Explod) { e.vfacing = -1 })
-				} else {
-					eachExpl(func(e *Explod) { e.vfacing = 1 })
+					vf = -1
+				}
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) {
+						e.vfacing = vf
+					})
 				}
 			case explod_pos:
-				x := exp[0].evalF(c) * lclscround
-				eachExpl(func(e *Explod) { e.offset[0] = x })
+				pos[0] = exp[0].evalF(c) * lclscround
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) { e.relativePos[0] = pos[0] })
+				}
 				if len(exp) > 1 {
-					y := exp[1].evalF(c) * lclscround
-					eachExpl(func(e *Explod) { e.offset[1] = y })
+					pos[1] = exp[1].evalF(c) * lclscround
+					if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+						eachExpl(func(e *Explod) { e.relativePos[1] = pos[1] })
+					}
 				}
 			case explod_random:
 				rndx := (exp[0].evalF(c) / 2) * lclscround
 				rndx = RandF(-rndx, rndx)
-				eachExpl(func(e *Explod) { e.offset[0] += rndx })
+				pos[0] += rndx
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) { e.relativePos[0] += rndx })
+				}
 				if len(exp) > 1 {
 					rndy := (exp[1].evalF(c) / 2) * lclscround
 					rndy = RandF(-rndy, rndy)
-					eachExpl(func(e *Explod) { e.offset[1] += rndy })
+					pos[1] += rndy
+					if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+						eachExpl(func(e *Explod) { e.relativePos[1] += rndy })
+					}
+				}
+			case explod_velocity:
+				vel[0] = exp[0].evalF(c) * lclscround
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) { e.velocity[0] = vel[0] })
+				}
+				if len(exp) > 1 {
+					vel[1] = exp[1].evalF(c) * lclscround
+					if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+						eachExpl(func(e *Explod) { e.velocity[1] = vel[1] })
+					}
+				}
+			case explod_accel:
+				accel[0] = exp[0].evalF(c) * lclscround
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) { e.accel[0] = accel[0] })
+				}
+				if len(exp) > 1 {
+					accel[1] = exp[1].evalF(c) * lclscround
+					if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+						eachExpl(func(e *Explod) { e.accel[1] = accel[1] })
+					}
+				}
+			case explod_space:
+				sp = Space(exp[0].evalI(c))
+				if (c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0) && !ptexists {
+					eachExpl(func(e *Explod) { e.space = sp })
 				}
 			case explod_postype:
 				pt := PosType(exp[0].evalI(c))
 				eachExpl(func(e *Explod) {
+					// Reset explod
+					e.reset()
+					// Set declared values
 					e.postype = pt
-					e.setPos(c)
+					e.relativef, e.vfacing = f, vf
+					e.relativePos, e.velocity, e.accel = pos, vel, accel
+					if sp != Space_none {
+						e.space = sp
+					}
+					// Finish pos configuration
+					e.setPos(crun)
 				})
-			case explod_space:
-				if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
-					sp := Space(exp[0].evalI(c))
-					eachExpl(func(e *Explod) { e.space = sp })
-				}
-			case explod_velocity:
-				x := exp[0].evalF(c) * lclscround
-				eachExpl(func(e *Explod) { e.velocity[0] = x })
-				if len(exp) > 1 {
-					y := exp[1].evalF(c) * lclscround
-					eachExpl(func(e *Explod) { e.velocity[1] = y })
-				}
-			case explod_accel:
-				x := exp[0].evalF(c) * lclscround
-				eachExpl(func(e *Explod) { e.accel[0] = x })
-				if len(exp) > 1 {
-					y := exp[1].evalF(c) * lclscround
-					eachExpl(func(e *Explod) { e.accel[1] = y })
-				}
 			case explod_scale:
 				x := exp[0].evalF(c)
 				eachExpl(func(e *Explod) { e.scale[0] = x })
@@ -3827,6 +3947,9 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 			case explod_removeongethit:
 				t := exp[0].evalB(c)
 				eachExpl(func(e *Explod) { e.removeongethit = t })
+			case explod_removeonchangestate:
+				t := exp[0].evalB(c)
+				eachExpl(func(e *Explod) { e.removeonchangestate = t })
 			case explod_trans:
 				s, d := exp[0].evalI(c), exp[1].evalI(c)
 				if len(exp) >= 3 {
@@ -3843,6 +3966,20 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 				if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
 					anim := crun.getAnim(exp[1].evalI(c), string(*(*[]byte)(unsafe.Pointer(&exp[0]))), false)
 					eachExpl(func(e *Explod) { e.anim = anim })
+				}
+			case explod_animelem:
+				if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
+					animelem := exp[0].evalI(c)
+					eachExpl(func(e *Explod) {
+						e.animelem = animelem
+						e.anim.Action()
+						e.setAnimElem()
+					})
+				}
+			case explod_animelemlooped:
+				if c.stCgi().ikemenver[0] > 0 || c.stCgi().ikemenver[1] > 0 {
+					animelemlooped := exp[0].evalB(c)
+					eachExpl(func(e *Explod) { e.animelemlooped = animelemlooped })
 				}
 			case explod_angle:
 				a := exp[0].evalF(c)
@@ -3871,7 +4008,7 @@ func (sc modifyExplod) Run(c *Char, _ []int32) bool {
 				if bId == -1 {
 					bId = crun.id
 				}
-				eachExpl(func(e *Explod) { e.bindId = bId })
+				eachExpl(func(e *Explod) { e.setBind(bId) })
 			default:
 				eachExpl(func(e *Explod) {
 					if e.ownpal {
@@ -3925,16 +4062,16 @@ func (sc gameMakeAnim) Run(c *Char, _ []int32) bool {
 		}
 		switch id {
 		case gameMakeAnim_pos:
-			e.offset[0] = exp[0].evalF(c) * lclscround
+			e.relativePos[0] = exp[0].evalF(c) * lclscround
 			if len(exp) > 1 {
-				e.offset[1] = exp[1].evalF(c) * lclscround
+				e.relativePos[1] = exp[1].evalF(c) * lclscround
 			}
 		case gameMakeAnim_random:
 			rndx := (exp[0].evalF(c) / 2) * lclscround
-			e.offset[0] += RandF(-rndx, rndx)
+			e.relativePos[0] += RandF(-rndx, rndx)
 			if len(exp) > 1 {
 				rndy := (exp[1].evalF(c) / 2) * lclscround
-				e.offset[1] += RandF(-rndy, rndy)
+				e.relativePos[1] += RandF(-rndy, rndy)
 			}
 		case gameMakeAnim_under:
 			e.ontop = !exp[0].evalB(c)
@@ -3946,8 +4083,8 @@ func (sc gameMakeAnim) Run(c *Char, _ []int32) bool {
 	if e == nil {
 		return false
 	}
-	e.offset[0] -= float32(crun.size.draw.offset[0])
-	e.offset[1] -= float32(crun.size.draw.offset[1])
+	e.relativePos[0] -= float32(crun.size.draw.offset[0])
+	e.relativePos[1] -= float32(crun.size.draw.offset[1])
 	e.setPos(crun)
 	crun.insertExplod(i)
 	return false
@@ -3963,6 +4100,7 @@ const (
 	afterImage_framegap
 	afterImage_palcolor
 	afterImage_palinvertall
+	afterImage_palinvertblend
 	afterImage_palbright
 	afterImage_palcontrast
 	afterImage_palpostbright
@@ -4001,6 +4139,8 @@ func (sc afterImage) runSub(c *Char, ai *AfterImage,
 		ai.setPalColor(exp[0].evalI(c))
 	case afterImage_palinvertall:
 		ai.setPalInvertall(exp[0].evalB(c))
+	case afterImage_palinvertblend:
+		ai.setPalInvertblend(exp[0].evalI(c))
 	case afterImage_palbright:
 		ai.setPalBrightR(exp[0].evalI(c))
 		if len(exp) > 1 {
@@ -4058,6 +4198,10 @@ func (sc afterImage) Run(c *Char, _ []int32) bool {
 		}
 		if !doOce {
 			crun.aimg.clear()
+			//Mugen 1.1 behavior if invertblend param is omitted(Only if char mugenversion = 1.1)
+			if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 && crun.stCgi().ikemenver[0] <= 0 && crun.stCgi().ikemenver[1] <= 0 {
+				crun.aimg.palfx[0].invertblend = -2
+			}
 			crun.aimg.time = 1
 			doOce = true
 		}
@@ -4481,6 +4625,8 @@ func (sc hitDef) Run(c *Char, _ []int32) bool {
 	crun.hitdef.playerNo = sys.workingState.playerNo
 	crun.hitdef.sparkno = c.gi().data.sparkno
 	crun.hitdef.guard_sparkno = c.gi().data.guard.sparkno
+	crun.hitdef.hitsound_channel = c.gi().data.hitsound_channel
+	crun.hitdef.guardsound_channel = c.gi().data.guardsound_channel
 	StateControllerBase(sc).run(c, func(id byte, exp []BytecodeExp) bool {
 		if id == hitDef_redirectid {
 			if rid := sys.playerID(exp[0].evalI(c)); rid != nil {
@@ -4493,10 +4639,16 @@ func (sc hitDef) Run(c *Char, _ []int32) bool {
 				return false
 			}
 		}
+		//Mugen 1.1 behavior if invertblend param is omitted(Only if char mugenversion = 1.1)
+		if crun.stCgi().ver[0] == 1 && crun.stCgi().ver[1] == 1 && crun.stCgi().ikemenver[0] <= 0 && crun.stCgi().ikemenver[1] <= 0 {
+			crun.hitdef.palfx.invertblend = -2
+		}
 		sc.runSub(c, &crun.hitdef, id, exp)
 		return true
 	})
 	//winmugenでHitdefのattrが投げ属性で自分側pausetimeが1以上の時、毎フレーム実行されなくなる
+	//"In Winmugen, when the attr of Hitdef is set to 'Throw' and the pausetime
+	// on the attacker's side is greater than 1, it no longer executes every frame."
 	if crun.hitdef.attr&int32(AT_AT) != 0 && crun.moveContact() == 1 &&
 		c.gi().ver[0] != 1 && crun.hitdef.pausetime > 0 {
 		crun.hitdef.attr = 0
@@ -6719,17 +6871,15 @@ const (
 
 func (sc offset) Run(c *Char, _ []int32) bool {
 	crun := c
-	var lclscround float32 = 1.0
 	StateControllerBase(sc).run(c, func(id byte, exp []BytecodeExp) bool {
 		switch id {
 		case offset_x:
-			crun.offset[0] = exp[0].evalF(c) * lclscround
+			crun.offset[0] = exp[0].evalF(c) * c.localscl
 		case offset_y:
-			crun.offset[1] = exp[0].evalF(c) * lclscround
+			crun.offset[1] = exp[0].evalF(c) * c.localscl
 		case offset_redirectid:
 			if rid := sys.playerID(exp[0].evalI(c)); rid != nil {
 				crun = rid
-				lclscround = c.localscl / crun.localscl
 			} else {
 				return false
 			}
@@ -7691,7 +7841,10 @@ const (
 	modifyBGCtrl_add
 	modifyBGCtrl_mul
 	modifyBGCtrl_sinadd
+	modifyBGCtrl_sinmul
+	modifyBGCtrl_sincolor
 	modifyBGCtrl_invertall
+	modifyBGCtrl_invertblend
 	modifyBGCtrl_color
 	modifyBGCtrl_redirectid
 )
@@ -7702,8 +7855,8 @@ func (sc modifyBGCtrl) Run(c *Char, _ []int32) bool {
 	t, v := [3]int32{IErr, IErr, IErr}, [3]int32{IErr, IErr, IErr}
 	x, y := float32(math.NaN()), float32(math.NaN())
 	src, dst := [2]int32{IErr, IErr}, [2]int32{IErr, IErr}
-	add, mul, sinadd := [3]int32{IErr, IErr, IErr}, [3]int32{IErr, IErr, IErr}, [4]int32{IErr, IErr, IErr, IErr}
-	invall, color := IErr, float32(math.NaN())
+	add, mul, sinadd, sinmul, sincolor := [3]int32{IErr, IErr, IErr}, [3]int32{IErr, IErr, IErr}, [4]int32{IErr, IErr, IErr, IErr}, [4]int32{IErr, IErr, IErr, IErr}, [2]int32{IErr, IErr}
+	invall, invblend, color := IErr, IErr, float32(math.NaN())
 	StateControllerBase(sc).run(c, func(id byte, exp []BytecodeExp) bool {
 		switch id {
 		case modifyBGCtrl_id:
@@ -7765,8 +7918,26 @@ func (sc modifyBGCtrl) Run(c *Char, _ []int32) bool {
 					}
 				}
 			}
+		case modifyBGCtrl_sinmul:
+			sinmul[0] = exp[0].evalI(c)
+			if len(exp) > 1 {
+				sinmul[1] = exp[1].evalI(c)
+				if len(exp) > 2 {
+					sinmul[2] = exp[2].evalI(c)
+					if len(exp) > 3 {
+						sinmul[3] = exp[3].evalI(c)
+					}
+				}
+			}
+		case modifyBGCtrl_sincolor:
+			sincolor[0] = exp[0].evalI(c)
+			if len(exp) > 1 {
+				sincolor[1] = exp[1].evalI(c)
+			}
 		case modifyBGCtrl_invertall:
 			invall = exp[0].evalI(c)
+		case modifyBGCtrl_invertblend:
+			invblend = exp[0].evalI(c)
 		case modifyBGCtrl_color:
 			color = exp[0].evalF(c)
 		case modifyBGCtrl_redirectid:
@@ -7778,7 +7949,7 @@ func (sc modifyBGCtrl) Run(c *Char, _ []int32) bool {
 		}
 		return true
 	})
-	sys.stage.modifyBGCtrl(cid, t, v, x, y, src, dst, add, mul, sinadd, invall, color)
+	sys.stage.modifyBGCtrl(cid, t, v, x, y, src, dst, add, mul, sinadd, sinmul, sincolor, invall, invblend, color)
 	return false
 }
 
@@ -8299,7 +8470,7 @@ func (sc modifyStageVar) Run(c *Char, _ []int32) bool {
 	})
 	sys.stage.reload = true // Stage will have to be reloaded if it's re-selected
 	sys.cam.stageCamera = s.stageCamera
-	sys.cam.Init()
+	sys.cam.Reset()
 	return false
 }
 

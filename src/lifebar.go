@@ -116,7 +116,7 @@ func loadFightFx(def string) error {
 							return err
 						}
 						lines, i := SplitAndTrim(str, "\n"), 0
-						ffx.fat = ReadAnimationTable(ffx.fsff, lines, &i)
+						ffx.fat = ReadAnimationTable(ffx.fsff, &ffx.fsff.palList, lines, &i)
 						return nil
 					}); err != nil {
 					return err
@@ -311,7 +311,7 @@ func readHealthBar(pre string, is IniSection,
 func (hb *HealthBar) step(ref int, hbr *HealthBar) {
 	var life float32 = float32(sys.chars[ref][0].life) / float32(sys.chars[ref][0].lifeMax)
 	//redlife := (float32(sys.chars[ref][0].life) + float32(sys.chars[ref][0].redLife)) / float32(sys.chars[ref][0].lifeMax)
-	var redVal int32 = sys.chars[ref][0].redLife
+	var redVal int32 = sys.chars[ref][0].redLife - sys.chars[ref][0].life
 	var getHit bool = (sys.chars[ref][0].fakeReceivedHits != 0 || sys.chars[ref][0].ss.moveType == MT_H) && !sys.chars[ref][0].scf(SCF_over)
 
 	if hbr.toplife > life {
@@ -400,8 +400,8 @@ func (hb *HealthBar) bgDraw(layerno int16) {
 }
 func (hb *HealthBar) draw(layerno int16, ref int, hbr *HealthBar, f []*Fnt) {
 	life := float32(sys.chars[ref][0].life) / float32(sys.chars[ref][0].lifeMax)
-	redlife := (float32(sys.chars[ref][0].life) + float32(sys.chars[ref][0].redLife)) / float32(sys.chars[ref][0].lifeMax)
-	redval := sys.chars[ref][0].redLife
+	redlife := float32(sys.chars[ref][0].redLife) / float32(sys.chars[ref][0].lifeMax)
+	redval := sys.chars[ref][0].redLife - sys.chars[ref][0].life
 	var MidPos = (float32(sys.gameWidth-320) / 2)
 	width := func(life float32) (r [4]int32) {
 		r = sys.scrrect
@@ -1036,7 +1036,7 @@ func readLifeBarFace(pre string, is IniSection,
 }
 func (fa *LifeBarFace) step(ref int, far *LifeBarFace) {
 	group, number := int16(fa.face_spr[0]), int16(fa.face_spr[1])
-	if sys.chars[ref][0] != nil {
+	if sys.chars[ref][0] != nil && sys.chars[ref][0].anim != nil {
 		if mg, ok := sys.chars[ref][0].anim.remap[group]; ok {
 			if mn, ok := mg[number]; ok {
 				group, number = mn[0], mn[1]
@@ -1045,7 +1045,7 @@ func (fa *LifeBarFace) step(ref int, far *LifeBarFace) {
 	}
 	if far.old_spr[0] != int32(group) || far.old_spr[1] != int32(number) ||
 		far.old_pal[0] != sys.cgi[ref].remappedpal[0] || far.old_pal[1] != sys.cgi[ref].remappedpal[1] {
-		far.face = sys.cgi[ref].sff.getOwnPalSprite(group, number)
+		far.face = sys.cgi[ref].sff.getOwnPalSprite(group, number, &sys.cgi[ref].palettedata.palList)
 		far.old_spr = [...]int32{int32(group), int32(number)}
 		far.old_pal = [...]int32{sys.cgi[ref].remappedpal[0], sys.cgi[ref].remappedpal[1]}
 	}
@@ -1093,12 +1093,17 @@ func (fa *LifeBarFace) draw(layerno int16, ref int, far *LifeBarFace) {
 			pfx = sys.chars[ref][0].getPalfx()
 		}
 		if far.palshare {
-			sys.cgi[ref].sff.palList.SwapPalMap(&sys.chars[ref][0].getPalfx().remap)
+			sys.cgi[ref].palettedata.palList.SwapPalMap(&sys.chars[ref][0].getPalfx().remap)
 		}
 		far.face.Pal = nil
-		far.face.Pal = far.face.GetPal(&sys.cgi[ref].sff.palList)
+		if far.face.PalTex != nil {
+			far.face.PalTex = far.face.GetPalTex(&sys.cgi[ref].palettedata.palList)
+		} else {
+			far.face.Pal = nil
+			far.face.Pal = far.face.GetPal(&sys.cgi[ref].palettedata.palList)
+		}
 		if far.palshare {
-			sys.cgi[ref].sff.palList.SwapPalMap(&sys.chars[ref][0].getPalfx().remap)
+			sys.cgi[ref].palettedata.palList.SwapPalMap(&sys.chars[ref][0].getPalfx().remap)
 		}
 		ob := sys.brightness
 		if ref == sys.superplayer {
@@ -1828,7 +1833,7 @@ func readLifeBarRound(is IniSection,
 		ro.over_wintime = Max(1, tmp)
 	}
 	if is.ReadI32("over.time", &tmp) {
-		ro.over_time = Max(ro.over_wintime+1, tmp)
+		ro.over_time = Max(1, tmp)
 	}
 	is.ReadI32("win.time", &ro.win_time)
 	ro.win_sndtime = ro.win_time
@@ -2187,13 +2192,13 @@ func (ro *LifeBarRound) act() bool {
 			switch sys.finish {
 			case FT_KO:
 				ro.ko_top.Action()
-				f(&ro.ko, 2, 75)
+				f(&ro.ko, 2, 9)
 				for i := len(ro.ko_bg) - 1; i >= 0; i-- {
 					ro.ko_bg[i].Action()
 				}
 			case FT_DKO:
 				ro.dko_top.Action()
-				f(&ro.dko, 2, 75)
+				f(&ro.dko, 2, 9)
 				for i := len(ro.dko_bg) - 1; i >= 0; i-- {
 					ro.dko_bg[i].Action()
 				}
@@ -2204,7 +2209,7 @@ func (ro *LifeBarRound) act() bool {
 					ro.to_bg[i].Action()
 				}
 			}
-			if sys.intro < -(ro.over_hittime + ro.over_waittime /*+ ro.over_wintime*/) {
+			if sys.intro < -(ro.over_waittime /*+ ro.over_wintime*/) {
 				wt := sys.winTeam
 				if wt < 0 {
 					wt = 0
@@ -3045,7 +3050,7 @@ func loadLifebar(def string) (*Lifebar, error) {
 		}
 	}
 	lines, i := SplitAndTrim(str, "\n"), 0
-	l.at = ReadAnimationTable(l.sff, lines, &i)
+	l.at = ReadAnimationTable(l.sff, &l.sff.palList, lines, &i)
 	i = 0
 	filesflg := true
 	ffx := newFightFx()
@@ -3106,7 +3111,7 @@ func loadLifebar(def string) (*Lifebar, error) {
 							return err
 						}
 						lines, i := SplitAndTrim(str, "\n"), 0
-						ffx.fat = ReadAnimationTable(ffx.fsff, lines, &i)
+						ffx.fat = ReadAnimationTable(ffx.fsff, &ffx.fsff.palList, lines, &i)
 						return nil
 					}); err != nil {
 					return nil, err

@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/samhocevar/beep"
-	"github.com/samhocevar/beep/speaker"
+	"github.com/ikemen-engine/beep"
+	"github.com/ikemen-engine/beep/speaker"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -232,6 +232,7 @@ type System struct {
 	shuttertime             int32
 	fadeintime              int32
 	fadeouttime             int32
+	wintime                 int32
 	projs                   [MaxSimul*2 + MaxAttachedChar][]Projectile
 	explods                 [MaxSimul*2 + MaxAttachedChar][]Explod
 	explDrawlist            [MaxSimul*2 + MaxAttachedChar][]int
@@ -338,7 +339,7 @@ type System struct {
 	matchData         *lua.LTable
 	consecutiveWins   [2]int32
 	consecutiveRounds bool
-	firstAttack       [3]int32
+	firstAttack       [3]int
 	teamLeader        [2]int
 	gameSpeed         float32
 	maxPowerMode      bool
@@ -641,11 +642,10 @@ func (s *System) roundEnd() bool {
 	return s.intro < -s.lifebar.ro.over_hittime
 }
 func (s *System) roundWinTime() bool {
-	return s.intro < -(s.lifebar.ro.over_hittime + s.lifebar.ro.over_waittime + s.lifebar.ro.over_wintime)
+	return s.wintime < 0
 }
 func (s *System) roundOver() bool {
-	return s.intro < -(s.lifebar.ro.over_time)
-	// return s.intro < -(s.lifebar.ro.over_hittime + s.lifebar.ro.over_waittime + s.lifebar.ro.over_time)
+	return s.intro < -(s.lifebar.ro.over_waittime + s.lifebar.ro.over_time)
 }
 func (s *System) sf(gsf GlobalSpecialFlag) bool {
 	return s.specialFlag&gsf != 0
@@ -769,17 +769,18 @@ func (s *System) playerClear(pn int, destroy bool) {
 func (s *System) nextRound() {
 	s.resetGblEffect()
 	s.lifebar.reset()
-	s.firstAttack = [3]int32{}
+	s.firstAttack = [3]int{-1, -1, 0}
 	s.finish = FT_NotYet
 	s.winTeam = -1
 	s.winType = [...]WinType{WT_N, WT_N}
 	s.winTrigger = [...]WinType{WT_N, WT_N}
 	s.lastHitter = [2]int{-1, -1}
-	s.waitdown = s.lifebar.ro.over_hittime + s.lifebar.ro.over_waittime + 900
+	s.waitdown = s.lifebar.ro.over_waittime + 900
 	s.slowtime = s.lifebar.ro.slow_time
 	s.shuttertime = 0
 	s.fadeintime = s.lifebar.ro.fadein_time
 	s.fadeouttime = s.lifebar.ro.fadeout_time
+	s.wintime = s.lifebar.ro.over_wintime
 	s.winskipped = false
 	s.intro = s.lifebar.ro.start_waittime + s.lifebar.ro.ctrl_time + 1
 	s.time = s.roundTime
@@ -843,7 +844,7 @@ func (s *System) nextRound() {
 				p[0].cmd[j].BufReset()
 			}
 			if s.roundsExisted[i&1] == 0 {
-				s.cgi[i].sff.palList.ResetRemap()
+				s.cgi[i].palettedata.palList.ResetRemap()
 				if s.cgi[i].sff.header.Ver0 == 1 {
 					p[0].remapPal(p[0].getPalfx(),
 						[...]int32{1, 1}, [...]int32{1, s.cgi[i].drawpalno})
@@ -909,16 +910,11 @@ func (s *System) commandUpdate() {
 				act = false
 			}
 			// Having this here makes B and F inputs reverse the same instant the character turns
-			if act && !r.sf(CSF_noautoturn) &&
+			if act && !r.sf(CSF_noautoturn) && (r.scf(SCF_ctrl) || r.roundState() > 2) &&
 				(r.ss.no == 0 || r.ss.no == 11 || r.ss.no == 20 || r.ss.no == 52) {
 				r.turn()
 			}
-			if !r.sf(CSF_postroundinput) &&
-				s.intro <= -(s.lifebar.ro.over_hittime+s.lifebar.ro.over_waittime) &&
-				s.intro > -(s.lifebar.ro.over_hittime+s.lifebar.ro.over_waittime+s.lifebar.ro.over_wintime) {
-				r.setSF(CSF_noinput)
-			}
-			if r.inputOver() || r.sf(CSF_noinput) || (r.aiLevel() > 0 && !r.alive()) {
+			if r.inputOver() || r.sf(CSF_noinput) {
 				for j := range r.cmd {
 					r.cmd[j].BufReset()
 				}
@@ -1017,159 +1013,8 @@ func (s *System) action() {
 			lowest = (y - s.cam.CameraZoomYBound)
 		}
 	}
-	if s.tickFrame() {
-		s.xmin = s.cam.ScreenPos[0] + s.cam.Offset[0] + s.screenleft
-		s.xmax = s.cam.ScreenPos[0] + s.cam.Offset[0] +
-			float32(s.gameWidth)/s.cam.Scale - s.screenright
-		if s.xmin > s.xmax {
-			s.xmin = (s.xmin + s.xmax) / 2
-			s.xmax = s.xmin
-		}
-		s.allPalFX.step()
-		//s.bgPalFX.step()
-		s.envShake.next()
-		if s.envcol_time > 0 {
-			s.envcol_time--
-		}
-		if s.enableZoomtime > 0 {
-			s.enableZoomtime--
-		} else {
-			s.zoomCameraBound = true
-			s.zoomStageBound = true
-		}
-		if s.super > 0 {
-			s.super--
-		} else if s.pause > 0 {
-			s.pause--
-		}
-		if s.supertime < 0 {
-			s.supertime = ^s.supertime
-			s.super = s.supertime
-		}
-		if s.pausetime < 0 {
-			s.pausetime = ^s.pausetime
-			s.pause = s.pausetime
-		}
-		// in mugen 1.1 most global assertspecial flags are reset during pause
-		// TODO: test if roundnotover should reset (keep intro and noko active)
-		if s.super <= 0 && s.pause <= 0 {
-			s.specialFlag = 0
-		} else {
-			s.unsetSF(GSF_assertspecialpause)
-		}
-		if s.superanim != nil {
-			s.superanim.Action()
-		}
-		s.charList.action(x, &cvmin, &cvmax,
-			&highest, &lowest, &leftest, &rightest)
-		s.nomusic = s.sf(GSF_nomusic) && !sys.postMatchFlg
-	} else {
-		s.charUpdate(&cvmin, &cvmax, &highest, &lowest, &leftest, &rightest)
-	}
-	s.lifebar.step()
-	if s.firstAttack[0] != 0 || s.firstAttack[1] != 0 {
-		s.firstAttack[2] = 1
-	}
 
-	// Action camera
-	leftest -= x
-	rightest -= x
-	var newx, newy float32 = x, y
-	var sclMul float32
-	sclMul = s.cam.action(&newx, &newy, leftest, rightest, lowest, highest,
-		cvmin, cvmax, s.super > 0 || s.pause > 0)
-
-	// Update camera
-	introSkip := false
-	if s.tickNextFrame() {
-		if s.lifebar.ro.cur < 1 && !s.introSkipped {
-			if s.shuttertime > 0 ||
-				s.anyButton() && !s.sf(GSF_roundnotskip) && s.intro > s.lifebar.ro.ctrl_time {
-				s.shuttertime++
-				if s.shuttertime == s.lifebar.ro.shutter_time {
-					s.fadeintime = 0
-					s.resetGblEffect()
-					s.intro = s.lifebar.ro.ctrl_time
-					for i, p := range s.chars {
-						if len(p) > 0 {
-							s.playerClear(i, false)
-							p[0].posReset()
-							p[0].selfState(0, -1, -1, 0, "")
-						}
-					}
-					ox := newx
-					newx = 0
-					leftest = MaxF(float32(Min(s.stage.p[0].startx,
-						s.stage.p[1].startx))*s.stage.localscl,
-						-(float32(s.gameWidth)/2)/s.cam.BaseScale()+s.screenleft) - ox
-					rightest = MinF(float32(Max(s.stage.p[0].startx,
-						s.stage.p[1].startx))*s.stage.localscl,
-						(float32(s.gameWidth)/2)/s.cam.BaseScale()-s.screenright) - ox
-					introSkip = true
-					s.introSkipped = true
-				}
-			}
-		} else {
-			if s.shuttertime > 0 {
-				s.shuttertime--
-			}
-		}
-	}
-	if introSkip {
-		sclMul = 1 / scl
-	}
-	leftest = (leftest - s.screenleft) * s.cam.BaseScale()
-	rightest = (rightest + s.screenright) * s.cam.BaseScale()
-	scl = s.cam.ScaleBound(scl, sclMul)
-	tmp := (float32(s.gameWidth) / 2) / scl
-	if AbsF((leftest+rightest)-(newx-x)*2) >= tmp/2 {
-		tmp = MaxF(0, MinF(tmp, MaxF((newx-x)-leftest, rightest-(newx-x))))
-	}
-	x = s.cam.XBound(scl, MinF(x+leftest+tmp, MaxF(x+rightest-tmp, newx)))
-	if !s.cam.ZoomEnable {
-		// Pos X の誤差が出ないように精度を落とす
-		x = float32(math.Ceil(float64(x)*4-0.5) / 4)
-	}
-	y = s.cam.YBound(scl, newy)
-	s.cam.Update(scl, x, y)
-
-	if s.superanim != nil {
-		s.topSprites.add(&SprData{s.superanim, &s.superpmap, s.superpos,
-			[...]float32{s.superfacing, 1}, [2]int32{-1}, 5, Rotation{}, [2]float32{},
-			false, true, s.cgi[s.superplayer].ver[0] != 1, 1, 1, 0, 0, [4]float32{0, 0, 0, 0}}, 0, 0, 0, 0)
-		if s.superanim.loopend {
-			s.superanim = nil
-		}
-	}
-	for i, pr := range s.projs {
-		for j, p := range pr {
-			if p.id >= 0 {
-				s.projs[i][j].cueDraw(s.cgi[i].ver[0] != 1, i)
-			}
-		}
-	}
-	s.charList.cueDraw()
-	explUpdate := func(edl *[len(s.chars)][]int, drop bool) {
-		for i, el := range *edl {
-			for j := len(el) - 1; j >= 0; j-- {
-				if el[j] >= 0 {
-					s.explods[i][el[j]].update(s.cgi[i].ver[0] != 1, i)
-					if s.explods[i][el[j]].id == IErr {
-						if drop {
-							el = append(el[:j], el[j+1:]...)
-							(*edl)[i] = el
-						} else {
-							el[j] = -1
-						}
-					}
-				}
-			}
-		}
-	}
-	explUpdate(&s.explDrawlist, true)
-	explUpdate(&s.topexplDrawlist, false)
-	explUpdate(&s.underexplDrawlist, true)
-
+	// Run lifebar
 	if s.lifebar.ro.act() {
 		if s.intro > s.lifebar.ro.ctrl_time {
 			s.intro--
@@ -1333,40 +1178,52 @@ func (s *System) action() {
 					}
 				}
 			}
-			if !s.sf(GSF_roundnotover) || s.intro != -(s.lifebar.ro.over_time-s.lifebar.ro.fadeout_time-1) {
-				s.intro--
-			}
+			rs4t := -s.lifebar.ro.over_waittime
+			s.intro--
 			if s.intro == -s.lifebar.ro.over_hittime && s.finish != FT_NotYet {
 				inclWinCount()
 			}
 			// Check if player skipped win pose time
-			if s.tickFrame() && s.roundWinTime() && (s.anyButton() && !s.sf(GSF_roundnotskip)) {
-				//	s.intro = Min(s.intro, -(s.lifebar.ro.over_hittime +
-				//		s.lifebar.ro.over_waittime + s.lifebar.ro.over_time -
-				//		s.lifebar.ro.start_waittime))
-				s.intro = Min(s.intro, -(s.lifebar.ro.over_time - s.lifebar.ro.start_waittime))
+			if s.roundWinTime() && (s.anyButton() && !s.sf(GSF_roundnotskip)) {
+				s.intro = Min(s.intro, rs4t-2-s.lifebar.ro.over_time+s.lifebar.ro.fadeout_time)
 				s.winskipped = true
 			}
-			rs4t := -(s.lifebar.ro.over_hittime + s.lifebar.ro.over_waittime)
-			if s.winskipped || s.intro >= rs4t-s.lifebar.ro.over_wintime {
+			if s.winskipped || !s.roundWinTime() {
+				// Check if game can proceed into roundstate 4
 				if s.waitdown > 0 {
 					if s.intro == rs4t-1 {
 						for _, p := range s.chars {
 							if len(p) > 0 {
-								// Disable ctrl (once) and set "ctrl wait" flag
-								if p[0].scf(SCF_ctrl) && !p[0].scf(SCF_ctrlwait) && p[0].ss.stateType != ST_A && p[0].ss.stateType != ST_L {
-									p[0].setCtrl(false)
-									p[0].setSCF(SCF_ctrlwait)
+								// Set inputwait flag to stop inputs until win pose time
+								if !p[0].scf(SCF_inputwait) {
+									p[0].setSCF(SCF_inputwait)
+								}
+								// Check if this character is ready to procced to roundstate 4
+								if p[0].scf(SCF_over) || p[0].ss.no == 5150 || (p[0].scf(SCF_ctrl) && p[0].ss.moveType == MT_I &&
+									p[0].ss.stateType != ST_A && p[0].ss.stateType != ST_L) {
+									continue
 								}
 								// Freeze timer if any character is not ready to proceed yet
-								if !p[0].scf(SCF_ctrlwait) && !p[0].scf(SCF_over) {
-									s.intro = rs4t
-								}
+								s.intro = rs4t
+								break
 							}
 						}
 					}
 				}
-				if s.waitdown <= 0 || s.intro <= rs4t-s.lifebar.ro.over_wintime {
+				// Disable ctrl (once) at the first frame of roundstate 4
+				if s.intro == rs4t-1 {
+					for _, p := range s.chars {
+						if len(p) > 0 {
+							p[0].setCtrl(false)
+						}
+					}
+				}
+				// Start running wintime counter only after getting into roundstate 4
+				if s.intro < rs4t && !s.roundWinTime() {
+					s.wintime--
+				}
+				// Set characters into win/lose poses, update win counters
+				if s.waitdown <= 0 || s.roundWinTime() {
 					if s.waitdown >= 0 {
 						w := [...]bool{!s.chars[1][0].win(), !s.chars[0][0].win()}
 						if !w[0] || !w[1] ||
@@ -1399,7 +1256,7 @@ func (s *System) action() {
 							}
 							if !p[0].scf(SCF_over) && !p[0].hitPause() && p[0].alive() && p[0].animNo != 5 {
 								p[0].setSCF(SCF_over)
-								p[0].unsetSCF(SCF_ctrlwait)
+								p[0].unsetSCF(SCF_inputwait)
 								if p[0].win() {
 									p[0].selfState(180, -1, -1, -1, "")
 								} else if p[0].lose() {
@@ -1414,10 +1271,171 @@ func (s *System) action() {
 				}
 				s.waitdown--
 			}
+			// If the game can't proceed to the fadeout screen, we turn back the counter 1 tick
+			if !s.winskipped && s.sf(GSF_roundnotover) &&
+				s.intro == rs4t-2-s.lifebar.ro.over_time+s.lifebar.ro.fadeout_time {
+				s.intro++
+			}
 		} else if s.intro < 0 {
 			s.intro = 0
 		}
 	}
+
+	// Run tick frame
+	if s.tickFrame() {
+		s.xmin = s.cam.ScreenPos[0] + s.cam.Offset[0] + s.screenleft
+		s.xmax = s.cam.ScreenPos[0] + s.cam.Offset[0] +
+			float32(s.gameWidth)/s.cam.Scale - s.screenright
+		if s.xmin > s.xmax {
+			s.xmin = (s.xmin + s.xmax) / 2
+			s.xmax = s.xmin
+		}
+		s.allPalFX.step()
+		//s.bgPalFX.step()
+		s.envShake.next()
+		if s.envcol_time > 0 {
+			s.envcol_time--
+		}
+		if s.enableZoomtime > 0 {
+			s.enableZoomtime--
+		} else {
+			s.zoomCameraBound = true
+			s.zoomStageBound = true
+		}
+		if s.super > 0 {
+			s.super--
+		} else if s.pause > 0 {
+			s.pause--
+		}
+		if s.supertime < 0 {
+			s.supertime = ^s.supertime
+			s.super = s.supertime
+		}
+		if s.pausetime < 0 {
+			s.pausetime = ^s.pausetime
+			s.pause = s.pausetime
+		}
+		// in mugen 1.1 most global assertspecial flags are reset during pause
+		// TODO: test if roundnotover should reset (keep intro and noko active)
+		if s.super <= 0 && s.pause <= 0 {
+			s.specialFlag = 0
+		} else {
+			s.unsetSF(GSF_assertspecialpause)
+		}
+		if s.superanim != nil {
+			s.superanim.Action()
+		}
+		s.charList.action(x, &cvmin, &cvmax,
+			&highest, &lowest, &leftest, &rightest)
+		s.nomusic = s.sf(GSF_nomusic) && !sys.postMatchFlg
+	} else {
+		s.charUpdate(&cvmin, &cvmax, &highest, &lowest, &leftest, &rightest)
+	}
+	s.lifebar.step()
+
+	// Set global First Attack flag if either team got it
+	if s.firstAttack[0] >= 0 || s.firstAttack[1] >= 0 {
+		s.firstAttack[2] = 1
+	}
+
+	// Run camera
+	leftest -= x
+	rightest -= x
+	var newx, newy float32 = x, y
+	var sclMul float32
+	sclMul = s.cam.action(&newx, &newy, leftest, rightest, lowest, highest,
+		cvmin, cvmax, s.super > 0 || s.pause > 0)
+
+	// Update camera
+	introSkip := false
+	if s.tickNextFrame() {
+		if s.lifebar.ro.cur < 1 && !s.introSkipped {
+			if s.shuttertime > 0 ||
+				s.anyButton() && !s.sf(GSF_roundnotskip) && s.intro > s.lifebar.ro.ctrl_time {
+				s.shuttertime++
+				if s.shuttertime == s.lifebar.ro.shutter_time {
+					s.fadeintime = 0
+					s.resetGblEffect()
+					s.intro = s.lifebar.ro.ctrl_time
+					for i, p := range s.chars {
+						if len(p) > 0 {
+							s.playerClear(i, false)
+							p[0].posReset()
+							p[0].selfState(0, -1, -1, 0, "")
+						}
+					}
+					ox := newx
+					newx = 0
+					leftest = MaxF(float32(Min(s.stage.p[0].startx,
+						s.stage.p[1].startx))*s.stage.localscl,
+						-(float32(s.gameWidth)/2)/s.cam.BaseScale()+s.screenleft) - ox
+					rightest = MinF(float32(Max(s.stage.p[0].startx,
+						s.stage.p[1].startx))*s.stage.localscl,
+						(float32(s.gameWidth)/2)/s.cam.BaseScale()-s.screenright) - ox
+					introSkip = true
+					s.introSkipped = true
+				}
+			}
+		} else {
+			if s.shuttertime > 0 {
+				s.shuttertime--
+			}
+		}
+	}
+	if introSkip {
+		sclMul = 1 / scl
+	}
+	leftest = (leftest - s.screenleft) * s.cam.BaseScale()
+	rightest = (rightest + s.screenright) * s.cam.BaseScale()
+	scl = s.cam.ScaleBound(scl, sclMul)
+	tmp := (float32(s.gameWidth) / 2) / scl
+	if AbsF((leftest+rightest)-(newx-x)*2) >= tmp/2 {
+		tmp = MaxF(0, MinF(tmp, MaxF((newx-x)-leftest, rightest-(newx-x))))
+	}
+	x = s.cam.XBound(scl, MinF(x+leftest+tmp, MaxF(x+rightest-tmp, newx)))
+	if !s.cam.ZoomEnable {
+		// Pos X の誤差が出ないように精度を落とす
+		x = float32(math.Ceil(float64(x)*4-0.5) / 4)
+	}
+	y = s.cam.YBound(scl, newy)
+	s.cam.Update(scl, x, y)
+
+	if s.superanim != nil {
+		s.topSprites.add(&SprData{s.superanim, &s.superpmap, s.superpos,
+			[...]float32{s.superfacing, 1}, [2]int32{-1}, 5, Rotation{}, [2]float32{},
+			false, true, s.cgi[s.superplayer].ver[0] != 1, 1, 1, 0, 0, [4]float32{0, 0, 0, 0}}, 0, 0, 0, 0)
+		if s.superanim.loopend {
+			s.superanim = nil
+		}
+	}
+	for i, pr := range s.projs {
+		for j, p := range pr {
+			if p.id >= 0 {
+				s.projs[i][j].cueDraw(s.cgi[i].ver[0] != 1, i)
+			}
+		}
+	}
+	s.charList.cueDraw()
+	explUpdate := func(edl *[len(s.chars)][]int, drop bool) {
+		for i, el := range *edl {
+			for j := len(el) - 1; j >= 0; j-- {
+				if el[j] >= 0 {
+					s.explods[i][el[j]].update(s.cgi[i].ver[0] != 1, i)
+					if s.explods[i][el[j]].id == IErr {
+						if drop {
+							el = append(el[:j], el[j+1:]...)
+							(*edl)[i] = el
+						} else {
+							el[j] = -1
+						}
+					}
+				}
+			}
+		}
+	}
+	explUpdate(&s.explDrawlist, true)
+	explUpdate(&s.topexplDrawlist, false)
+	explUpdate(&s.underexplDrawlist, true)
 
 	if s.tickNextFrame() {
 		spd := s.gameSpeed * s.accel
@@ -1526,14 +1544,13 @@ func (s *System) drawTop() {
 	fade := func(rect [4]int32, color uint32, alpha int32) {
 		FillRect(rect, color, alpha>>uint(Btoi(s.clsnDraw))+Btoi(s.clsnDraw)*128)
 	}
-	// fadeout := sys.intro + sys.lifebar.ro.over_hittime + sys.lifebar.ro.over_waittime + sys.lifebar.ro.over_time
-	fadeout := sys.intro + sys.lifebar.ro.over_time
-	if fadeout == s.fadeouttime-1 && len(sys.commonLua) > 0 && sys.matchOver() && !s.dialogueFlg {
-		for _, p := range sys.chars {
+	fadeout := s.intro + s.lifebar.ro.over_waittime + s.lifebar.ro.over_time
+	if fadeout == s.lifebar.ro.fadeout_time-1 && len(s.commonLua) > 0 && s.matchOver() && !s.dialogueFlg {
+		for _, p := range s.chars {
 			if len(p) > 0 {
 				if len(p[0].dialogue) > 0 {
-					sys.lifebar.ro.cur = 3
-					sys.dialogueFlg = true
+					s.lifebar.ro.cur = 3
+					s.dialogueFlg = true
 					break
 				}
 			}
@@ -1541,10 +1558,14 @@ func (s *System) drawTop() {
 	}
 	if s.fadeintime > 0 {
 		fade(s.scrrect, s.lifebar.ro.fadein_col, 256*s.fadeintime/s.lifebar.ro.fadein_time)
-		s.fadeintime--
-	} else if s.fadeouttime > 0 && fadeout < s.fadeouttime-1 && !s.dialogueFlg {
+		if s.tickFrame() {
+			s.fadeintime--
+		}
+	} else if s.fadeouttime > 0 && fadeout < s.lifebar.ro.fadeout_time-1 && !s.dialogueFlg {
 		fade(s.scrrect, s.lifebar.ro.fadeout_col, 256*(s.lifebar.ro.fadeout_time-s.fadeouttime)/s.lifebar.ro.fadeout_time)
-		s.fadeouttime--
+		if s.tickFrame() {
+			s.fadeouttime--
+		}
 	} else if s.clsnDraw && s.clsnDarken {
 		fade(s.scrrect, 0, 0)
 	}
@@ -1883,7 +1904,7 @@ func (s *System) fight() (reload bool) {
 			} else {
 				p[0].dizzyPoints = p[0].dizzyPointsMax
 			}
-			p[0].redLife = 0
+			p[0].redLife = p[0].lifeMax
 			copyVar(i)
 		}
 	}
@@ -2038,6 +2059,7 @@ func (s *System) fight() (reload bool) {
 
 		// F4 pressed to restart round
 		if s.roundResetFlg && !s.postMatchFlg {
+			sys.paused = false
 			reset()
 		}
 		// Shift+F4 pressed to restart match
@@ -2085,7 +2107,11 @@ func (s *System) fight() (reload bool) {
 			}
 			s.draw(dx, dy, dscl)
 		}
-		//Lua code executed before drawing fade, clsns and debug
+		// Render top elements such as fade effects
+		if !s.frameSkip {
+			s.drawTop()
+		}
+		// Lua code is executed after drawing the fade effects, so that the menus are on top of them
 		for _, str := range s.commonLua {
 			if err := s.luaLState.DoString(str); err != nil {
 				s.luaLState.RaiseError(err.Error())
@@ -2093,10 +2119,8 @@ func (s *System) fight() (reload bool) {
 		}
 		// Render debug elements
 		if !s.frameSkip {
-			s.drawTop()
 			s.drawDebug()
 		}
-
 		// Break if finished
 		if fin && (!s.postMatchFlg || len(sys.commonLua) == 0) {
 			break
@@ -2479,7 +2503,7 @@ func (s *Select) addChar(def string) {
 			return err
 		}
 		lines, i := SplitAndTrim(str, "\n"), 0
-		at := ReadAnimationTable(sff, lines, &i)
+		at := ReadAnimationTable(sff, &sff.palList, lines, &i)
 		for _, v := range s.charAnimPreload {
 			if anim := at.get(v); anim != nil {
 				sc.anims.addAnim(anim, v)
@@ -2495,22 +2519,30 @@ func (s *Select) addChar(def string) {
 	if fp = FileExist(fp); len(fp) == 0 {
 		fp = sprite
 	}
-	LoadFile(&fp, []string{def, "", "data/"}, func(file string) error {
-		var selPal []int32
-		var err error
-		sc.sff, selPal, err = preloadSff(file, true, listSpr)
-		if err != nil {
-			panic(fmt.Errorf("failed to load %v: %v\nerror preloading %v", file, err, def))
-		}
+	if len(fp) > 0 {
+		LoadFile(&fp, []string{def, "", "data/"}, func(file string) error {
+			var selPal []int32
+			var err error
+			sc.sff, selPal, err = preloadSff(file, true, listSpr)
+			if err != nil {
+				panic(fmt.Errorf("failed to load %v: %v\nerror preloading %v", file, err, def))
+			}
+			sc.anims.updateSff(sc.sff)
+			for k := range s.charSpritePreload {
+				sc.anims.addSprite(sc.sff, k[0], k[1])
+			}
+			if len(sc.pal) == 0 {
+				sc.pal = selPal
+			}
+			return nil
+		})
+	} else {
+		sc.sff = newSff()
 		sc.anims.updateSff(sc.sff)
 		for k := range s.charSpritePreload {
 			sc.anims.addSprite(sc.sff, k[0], k[1])
 		}
-		if len(sc.pal) == 0 {
-			sc.pal = selPal
-		}
-		return nil
-	})
+	}
 	//read movelist
 	if len(movelist) > 0 {
 		LoadFile(&movelist, []string{def, "", "data/"}, func(file string) error {
@@ -2607,7 +2639,7 @@ func (s *Select) AddStage(def string) error {
 		sff := newSff()
 		//preload animations
 		i = 0
-		at := ReadAnimationTable(sff, lines, &i)
+		at := ReadAnimationTable(sff, &sff.palList, lines, &i)
 		for _, v := range s.stageAnimPreload {
 			if anim := at.get(v); anim != nil {
 				ss.anims.addAnim(anim, v)
@@ -2744,6 +2776,7 @@ func (l *Loader) loadChar(pn int) int {
 			sys.cgi[pn].sff.sprites = nil
 		}
 		sys.cgi[pn].sff = nil
+		sys.cgi[pn].palettedata = nil
 		if len(sys.chars[pn]) > 0 {
 			p.power = sys.chars[pn][0].power
 			p.guardPoints = sys.chars[pn][0].guardPoints
@@ -2811,6 +2844,7 @@ func (l *Loader) loadAttachedChar(pn int) int {
 	} else {
 		p = newChar(pn, 0)
 		sys.cgi[pn].sff = nil
+		sys.cgi[pn].palettedata = nil
 		if len(sys.chars[pn]) > 0 {
 			p.power = sys.chars[pn][0].power
 			p.guardPoints = sys.chars[pn][0].guardPoints

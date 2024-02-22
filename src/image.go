@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"os"
+	"runtime"
 	"unsafe"
 )
 
@@ -24,25 +25,33 @@ const (
 )
 
 type PalFXDef struct {
-	time      int32
-	color     float32
-	add       [3]int32
-	mul       [3]int32
-	sinadd    [3]int32
-	cycletime int32
-	invertall bool
+	time           int32
+	color          float32
+	add            [3]int32
+	mul            [3]int32
+	sinadd         [3]int32
+	sinmul         [3]int32
+	sincolor       int32
+	cycletime      int32
+	cycletimeMul   int32
+	cycletimeColor int32
+	invertall      bool
+	invertblend    int32
 }
 type PalFX struct {
 	PalFXDef
-	remap      []int
-	negType    bool
-	sintime    int32
-	enable     bool
-	eNegType   bool
-	eInvertall bool
-	eAdd       [3]int32
-	eMul       [3]int32
-	eColor     float32
+	remap        []int
+	negType      bool
+	sintime      int32
+	sintime2     int32
+	sintime3     int32
+	enable       bool
+	eNegType     bool
+	eInvertall   bool
+	eInvertblend int32
+	eAdd         [3]int32
+	eMul         [3]int32
+	eColor       float32
 }
 
 func newPalFX() *PalFX { return &PalFX{} }
@@ -50,11 +59,13 @@ func (pf *PalFX) clear2(nt bool) {
 	pf.PalFXDef = PalFXDef{color: 1, mul: [...]int32{256, 256, 256}}
 	pf.negType = nt
 	pf.sintime = 0
+	pf.sintime2 = 0
+	pf.sintime3 = 0
 }
 func (pf *PalFX) clear() {
 	pf.clear2(false)
 }
-func (pf *PalFX) getSynFx() *PalFX {
+func (pf *PalFX) getSynFx(blending bool) *PalFX {
 	if pf == nil || !pf.enable {
 		return &sys.allPalFX
 	}
@@ -62,11 +73,11 @@ func (pf *PalFX) getSynFx() *PalFX {
 		return pf
 	}
 	synth := *pf
-	synth.synthesize(sys.allPalFX)
+	synth.synthesize(sys.allPalFX, blending)
 	return &synth
 }
 func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
-	p := pf.getSynFx()
+	p := pf.getSynFx(false)
 	if !p.enable {
 		return pal
 	}
@@ -115,9 +126,9 @@ func (pf *PalFX) getFxPal(pal []uint32, neg bool) []uint32 {
 	}
 	return sys.workpal
 }
-func (pf *PalFX) getFcPalFx(transNeg bool) (neg bool, grayscale float32,
-	add, mul [3]float32) {
-	p := pf.getSynFx()
+func (pf *PalFX) getFcPalFx(transNeg bool, blending bool) (neg bool, grayscale float32,
+	add, mul [3]float32, invblend int32) {
+	p := pf.getSynFx(blending)
 	if !p.enable {
 		neg = false
 		grayscale = 0
@@ -131,6 +142,7 @@ func (pf *PalFX) getFcPalFx(transNeg bool) (neg bool, grayscale float32,
 	}
 	neg = p.eInvertall
 	grayscale = 1 - p.eColor
+	invblend = p.eInvertblend
 	if !p.eNegType {
 		transNeg = false
 	}
@@ -157,6 +169,30 @@ func (pf *PalFX) sinAdd(color *[3]int32) {
 		}
 	}
 }
+func (pf *PalFX) sinMul(color *[3]int32) {
+	if pf.cycletimeMul > 1 {
+		st := 2 * math.Pi * float64(pf.sintime2)
+		if pf.cycletimeMul == 2 {
+			st += math.Pi / 2
+		}
+		sin := math.Sin(st / float64(pf.cycletimeMul))
+		for i := range *color {
+			(*color)[i] += int32(sin * float64(pf.sinmul[i]))
+		}
+	}
+}
+func (pf *PalFX) sinColor(color *float32) {
+	if pf.cycletimeColor > 1 {
+		st := 2 * math.Pi * float64(pf.sintime3)
+		if pf.cycletimeColor == 2 {
+			st += math.Pi / 2
+		}
+		sin := math.Sin(st / float64(pf.cycletimeColor))
+
+		(*color) += float32(sin * float64(pf.sincolor))
+
+	}
+}
 func (pf *PalFX) step() {
 	pf.enable = pf.time != 0
 	if pf.enable {
@@ -164,11 +200,24 @@ func (pf *PalFX) step() {
 		pf.eAdd = pf.add
 		pf.eColor = pf.color
 		pf.eInvertall = pf.invertall
+		if pf.invertblend <= -2 && pf.eInvertall {
+			pf.eInvertblend = 3
+		} else {
+			pf.eInvertblend = pf.invertblend
+		}
 		pf.eNegType = pf.negType
 		pf.sinAdd(&pf.eAdd)
+		pf.sinMul(&pf.eMul)
+		pf.sinColor(&pf.eColor)
 		if sys.tickFrame() {
 			if pf.cycletime > 0 {
 				pf.sintime = (pf.sintime + 1) % pf.cycletime
+			}
+			if pf.cycletimeMul > 0 {
+				pf.sintime2 = (pf.sintime2 + 1) % pf.cycletimeMul
+			}
+			if pf.cycletimeColor > 0 {
+				pf.sintime3 = (pf.sintime3 + 1) % pf.cycletimeColor
 			}
 			if pf.time > 0 {
 				pf.time--
@@ -176,7 +225,7 @@ func (pf *PalFX) step() {
 		}
 	}
 }
-func (pf *PalFX) synthesize(pfx PalFX) {
+func (pf *PalFX) synthesize(pfx PalFX, blending bool) {
 	for i, m := range pfx.eMul {
 		pf.eMul[i] = pf.eMul[i] * m / 256
 	}
@@ -185,6 +234,45 @@ func (pf *PalFX) synthesize(pfx PalFX) {
 	}
 	pf.eColor *= pfx.eColor
 	pf.eInvertall = pf.eInvertall != pfx.eInvertall
+
+	if pfx.invertall {
+		//Char blend inverse
+		if pfx.invertblend == 1 {
+			if blending && pf.invertblend > -3 {
+				pf.eInvertall = pf.invertall
+			}
+			switch {
+			case pf.invertblend == 0:
+				pf.eInvertblend = 1
+			case pf.invertblend == 1:
+				pf.eInvertblend = 0
+			case pf.invertblend == -2:
+				if pf.eInvertall {
+					pf.eInvertall = false
+					pf.eInvertblend = -2
+				} else {
+					pf.eInvertblend = 3
+				}
+			case pf.invertblend == 2:
+				pf.eInvertall = pf.invertall
+				pf.eInvertblend = -1
+			case pf.invertblend == -1:
+				pf.eInvertall = pf.invertall
+				pf.eInvertblend = 2
+			}
+		}
+
+		//Bg blend inverse
+		if pf.invertblend == -3 {
+			if pf.eInvertall {
+				pf.eInvertblend = 3
+			} else {
+				pf.eInvertall = false
+				pf.eInvertblend = -3
+			}
+		}
+	}
+
 }
 
 func (pf *PalFX) setColor(r, g, b int32) {
@@ -1013,6 +1101,11 @@ type Sff struct {
 	header  SffHeader
 	sprites map[[2]int16]*Sprite
 	palList PaletteList
+	//This is the sffCache key
+	filename string
+}
+type Palette struct {
+	palList PaletteList
 }
 
 func newSff() (s *Sff) {
@@ -1023,9 +1116,37 @@ func newSff() (s *Sff) {
 	}
 	return
 }
+func newPaldata() (p *Palette) {
+	p = &Palette{}
+	p.palList.init()
+	for i := int16(1); i <= int16(MaxPalNo); i++ {
+		p.palList.PalTable[[...]int16{1, i}], _ = p.palList.NewPal()
+	}
+	return
+}
 
+// A simple SFF cache storing shallow copies
+type SffCacheEntry struct {
+	sffData  Sff
+	refCount int
+}
+
+var SffCache = map[string]*SffCacheEntry{}
+
+func removeSFFCache(filename string) {
+	if _, ok := SffCache[filename]; ok {
+		delete(SffCache, filename)
+	}
+}
 func loadSff(filename string, char bool) (*Sff, error) {
+	// If this SFF is already in the cache, just return a copy
+	if cached, ok := SffCache[filename]; ok {
+		cached.refCount++
+		s := cached.sffData
+		return &s, nil
+	}
 	s := newSff()
+	s.filename = filename
 	f, err := os.Open(filename)
 	if err != nil {
 		return nil, err
@@ -1153,6 +1274,15 @@ func loadSff(filename string, char bool) (*Sff, error) {
 			shofs += 28
 		}
 	}
+	SffCache[filename] = &SffCacheEntry{*s, 1}
+	runtime.SetFinalizer(s, func(s *Sff) {
+		if cached, ok := SffCache[filename]; ok {
+			cached.refCount--
+			if cached.refCount == 0 {
+				delete(SffCache, filename)
+			}
+		}
+	})
 	return s, nil
 }
 func preloadSff(filename string, char bool, preloadSpr map[[2]int16]bool) (*Sff, []int32, error) {
@@ -1314,13 +1444,13 @@ func (s *Sff) GetSprite(g, n int16) *Sprite {
 	}
 	return s.sprites[[...]int16{g, n}]
 }
-func (s *Sff) getOwnPalSprite(g, n int16) *Sprite {
+func (s *Sff) getOwnPalSprite(g, n int16, pl *PaletteList) *Sprite {
 	sys.runMainThreadTask() // テクスチャを生成 / Generate texture
 	sp := s.GetSprite(g, n)
 	if sp == nil {
 		return nil
 	}
-	osp, pal := *sp, sp.GetPal(&s.palList)
+	osp, pal := *sp, sp.GetPal(pl)
 	osp.Pal = make([]uint32, len(pal))
 	copy(osp.Pal, pal)
 	return &osp
